@@ -4,7 +4,7 @@ Groq destekli sohbet Discord botu (SQLite kalıcı hafızalı).
 Kurulum:
     pip install discord.py groq python-dotenv
 
-.env dosyası:
+.env dosyası::
     DISCORD_TOKEN=discord_bot_tokeniniz
     GROQ_API_KEY=groq_api_anahtariniz
     # İsteğe bağlı:
