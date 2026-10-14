@@ -1,4 +1,4 @@
-"""
+""
 Groq destekli sohbet Discord botu (SQLite kalıcı hafızalı).
 
 Kurulum:
