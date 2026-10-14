@@ -2,15 +2,16 @@
 Groq destekli sohbet Discord botu (SQLite kalıcı hafızalı).
 
 Kurulum:
-    pip install discord.py groq python-dotenv
+    pip install discord.py openai python-dotenv
 
-.env dosyası::
+.env dosyası:
     DISCORD_TOKEN=discord_bot_tokeniniz
-    GROQ_API_KEY=groq_api_anahtariniz
+    LLM_API_KEY=gemini_api_anahtariniz     # aistudio.google.com/apikey
     # İsteğe bağlı:
     AUTO_CHANNEL_IDS=123456789,987654321   # Bot bu kanallardaki HER mesaja cevap verir
     ALLOWED_CHANNEL_IDS=                   # Doluysa bot sadece bu kanallarda çalışır
-    GROQ_MODEL=llama-3.3-70b-versatile
+    LLM_MODEL=gemini-2.5-flash
+    LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
     COOLDOWN_SECONDS=4
     DB_PATH=bot.db                         # Render'da kalıcı disk takarsanız: /data/bot.db
 """
@@ -25,13 +26,20 @@ import discord
 from aiohttp import web
 from discord import app_commands
 from dotenv import load_dotenv
-from groq import AsyncGroq
+from openai import AsyncOpenAI
 
 load_dotenv()
 
 # ---------------------------------------------------------------- Ayarlar
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
-MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# Varsayılan sağlayıcı: Google Gemini (ücretsiz kotası var).
+# Groq ya da OpenRouter için sadece LLM_BASE_URL, LLM_API_KEY ve LLM_MODEL değişkenlerini değiştirin.
+LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("GROQ_API_KEY")
+LLM_BASE_URL = os.getenv(
+    "LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+)
+MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 COOLDOWN = float(os.getenv("COOLDOWN_SECONDS", "4"))
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 MAX_HISTORY = 20          # Modele gönderilen son mesaj sayısı
@@ -155,7 +163,7 @@ class Database:
 db = Database(DB_PATH)
 
 # ------------------------------------------------------------ Durum
-groq = AsyncGroq()  # GROQ_API_KEY ortam değişkenini otomatik okur
+llm = AsyncOpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
 
 locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 last_used: dict[int, float] = {}
@@ -219,7 +227,7 @@ def clean_content(message: discord.Message) -> str:
 async def ask_groq(channel_id: int) -> str:
     messages = [{"role": "system", "content": system_prompt(channel_id)}]
     messages += db.get_history(channel_id)
-    response = await groq.chat.completions.create(
+    response = await llm.chat.completions.create(
         model=MODEL,
         messages=messages,
         max_tokens=700,
@@ -264,6 +272,14 @@ async def on_ready():
     )
     print(f"{client.user} olarak giriş yapıldı. Model: {MODEL} | Veritabanı: {DB_PATH}")
 
+    # Anahtarın erişebildiği modelleri logda göster (LLM_MODEL için doğru adı bulmak için)
+    try:
+        ids = [m.id.removeprefix("models/") async for m in llm.models.list()]
+        chat_ids = sorted(i for i in ids if "gemini" in i or "llama" in i or "gpt" in i)
+        print("Kullanılabilir modeller:", ", ".join(chat_ids[:40]) or "(liste boş)")
+    except Exception as e:
+        print("Model listesi alınamadı:", repr(e))
+
 
 @client.event
 async def on_message(message: discord.Message):
@@ -298,7 +314,7 @@ async def on_message(message: discord.Message):
                 reply = await ask_groq(channel_id)
             except Exception as e:
                 db.delete_message(user_row)  # Başarısız mesajı hafızadan çıkar
-                print("Groq hatası:", repr(e))
+                print("LLM hatası:", repr(e))
                 text = str(e).lower()
                 if "rate" in text or "429" in text:
                     await message.reply(
